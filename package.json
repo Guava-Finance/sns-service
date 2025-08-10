@@ -1,0 +1,36 @@
+{
+    "name": "sns-service",
+    "version": "1.0.0",
+    "main": "index.js",
+    "scripts": {
+        "build": "tsc",
+        "start": "node dist/index.js",
+        "dev": "nodemon src/index.ts",
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "description": "",
+    "devDependencies": {
+        "@types/body-parser": "^1.19.6",
+        "@types/cors": "^2.8.19",
+        "@types/express": "^5.0.3",
+        "@types/node": "^24.2.1",
+        "nodemon": "^3.1.10",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.9.2"
+    },
+    "dependencies": {
+        "@bonfida/spl-name-service": "^3.0.12",
+        "@solana/spl-token": "^0.4.13",
+        "@solana/web3.js": "^1.98.4",
+        "@types/bn.js": "^5.2.0",
+        "bn.js": "^5.2.2",
+        "body-parser": "^2.2.0",
+        "bs58": "^6.0.0",
+        "cors": "^2.8.5",
+        "dotenv": "^17.2.1",
+        "express": "^5.1.0"
+    }
+}
