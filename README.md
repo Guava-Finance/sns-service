@@ -12,6 +12,8 @@ A Node.js TypeScript service that integrates with Solana Name Service (SNS) usin
 - ✅ Atomic transactions with multiple instructions
 - ✅ TypeScript support
 - ✅ Express.js REST API
+- ✅ **End-to-end encryption** for all requests and responses
+- ✅ **AES-256-CBC encryption** compatible with Flutter encrypt package
 
 ## Prerequisites
 
@@ -39,6 +41,9 @@ cp env.example .env
 
 4. Edit `.env` with your configuration:
 ```env
+# Server Configuration
+PORT=3000
+
 # Solana RPC Endpoint
 RPC_ENDPOINT=https://api.mainnet-beta.solana.com
 
@@ -47,6 +52,13 @@ SYSTEM_WALLET_PRIVATE_KEY=your_system_wallet_private_key_here
 
 # USDC Mint Address (Mainnet)
 USDC_MINT_ADDRESS=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+
+# Encryption Configuration (AES-256-CBC)
+# Generate secure keys for production
+AES_ENCRYPTION_KEY=your-secure-encryption-key-here
+AES_ENCRYPTION_IV=your-16-byte-iv!!
+
+# Note: The IV must be exactly 16 bytes (128 bits)
 
 # SNS Program IDs
 SNS_PROGRAM_ID=58PwtjSDuFHuUkYjH9BYnnQKHfwo9reZhC2zMJv9JPkx
@@ -70,6 +82,51 @@ npm start
 ```
 
 The service will start on `http://localhost:3000` (or the port specified in your `.env`).
+
+## Encryption
+
+This service implements **automatic end-to-end encryption** for all API requests and responses using AES-256-CBC encryption. Unlike the solana-relayer service which only encrypts when the `IS_ENCRYPTED` header is present, this service **always encrypts/decrypts** all data regardless of headers.
+
+### How Encryption Works
+
+1. **Request Processing**: All incoming request bodies and query parameters are automatically decrypted
+2. **Response Processing**: All outgoing responses are automatically encrypted
+3. **Algorithm**: AES-256-CBC with SHA-256 key derivation (compatible with Flutter encrypt package)
+4. **Key Management**: Uses environment variables `AES_ENCRYPTION_KEY` and `AES_ENCRYPTION_IV`
+
+### Encryption Configuration
+
+Set these environment variables:
+```env
+AES_ENCRYPTION_KEY=your-secure-encryption-key-here
+AES_ENCRYPTION_IV=your-16-byte-iv!!  # Must be exactly 16 bytes
+```
+
+### Flutter Integration
+
+This encryption is compatible with the Flutter `encrypt` package:
+
+```dart
+import 'package:encrypt/encrypt.dart';
+
+final key = Key.fromBase64('your-base64-key');
+final iv = IV.fromBase64('your-base64-iv');
+final encrypter = Encrypter(AES(key));
+
+// Encrypt request data
+final encrypted = encrypter.encrypt(jsonEncode(data), iv: iv);
+
+// Make API call
+final response = await http.post(
+  Uri.parse('${baseUrl}/sns/purchase-domain'),
+  headers: {'Content-Type': 'application/json'},
+  body: encrypted.base64,
+);
+
+// Decrypt response
+final decrypted = encrypter.decrypt64(response.body, iv: iv);
+final result = jsonDecode(decrypted);
+```
 
 ## API Endpoints
 
@@ -95,6 +152,8 @@ Check if a domain is available and get its price.
 ```bash
 curl "http://localhost:3000/sns/check-domain?name=example.sol"
 ```
+
+**Note**: The query parameter `name` will be automatically decrypted, and the response will be encrypted.
 
 ### 2. Purchase Domain
 **POST** `/sns/purchase-domain`
@@ -133,6 +192,8 @@ curl -X POST http://localhost:3000/sns/purchase-domain \
     "serviceFeeAddress": "ServiceFeeWalletPublicKeyHere"
   }'
 ```
+
+**Note**: The request body will be automatically decrypted, and the response will be encrypted.
 
 ### 3. Update Domain Owner
 **POST** `/sns/update-domain`

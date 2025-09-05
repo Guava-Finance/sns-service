@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
+import { createEncryptionMiddleware } from './encryption';
 import {
   Connection,
   Keypair,
@@ -35,6 +36,12 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Initialize encryption middleware
+const encryptionMiddleware = createEncryptionMiddleware(
+  process.env.AES_ENCRYPTION_KEY || 'default-key-for-sns-service',
+  process.env.AES_ENCRYPTION_IV || 'default-iv-16b!!'
+);
 
 // Middleware
 app.use(cors());
@@ -82,63 +89,73 @@ async function isDomainAvailable(domainName: string): Promise<boolean> {
 // GET /sns/check-domain
 app.get('/sns/check-domain', async (req: Request, res: Response) => {
   try {
-    const { name } = req.query;
+    // Process request data (decrypt if encrypted)
+    const processedQuery = encryptionMiddleware.processRequest(req.query);
+    console.log('[API] /sns/check-domain - Processed query:', processedQuery);
+    
+    const { name } = processedQuery;
 
     if (!name || typeof name !== 'string') {
-      return res.status(400).json({ error: 'Domain name is required' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'Domain name is required' }));
     }
 
     const domainName = name.toLowerCase();
     if (!domainName.endsWith('.sol')) {
-      return res.status(400).json({ error: 'Domain must end with .sol' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'Domain must end with .sol' }));
     }
 
     const isAvailable = await isDomainAvailable(domainName);
     const price = await getDomainPrice(domainName);
 
-    res.json({
+    const response = {
       domain: domainName,
       available: isAvailable,
       priceUSDC: price,
       message: isAvailable ? 'Domain is available' : 'Domain is already taken'
-    });
+    };
+
+    res.json(encryptionMiddleware.processResponse(response));
   } catch (error) {
     console.error('Error checking domain:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json(encryptionMiddleware.processResponse({ error: 'Internal server error' }));
   }
 });
 
 // POST /sns/purchase-domain
 app.post('/sns/purchase-domain', async (req: Request, res: Response) => {
   try {
+    // Process request data (decrypt if encrypted)
+    const processedBody = encryptionMiddleware.processRequest(req.body);
+    console.log('[API] /sns/purchase-domain - Processed request body:', processedBody);
+    
     const {
       name,
       buyerPubkey,
       domainPriceUSDC,
       serviceFeeUSDC,
       serviceFeeAddress
-    } = req.body;
+    } = processedBody;
 
     // Validate input
     if (!name || !buyerPubkey || !domainPriceUSDC || !serviceFeeUSDC || !serviceFeeAddress) {
-      return res.status(400).json({ error: 'All fields are required' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'All fields are required' }));
     }
 
     const domainName = name.toLowerCase();
     if (!domainName.endsWith('.sol')) {
-      return res.status(400).json({ error: 'Domain must end with .sol' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'Domain must end with .sol' }));
     }
 
     // Check if domain is available
     const isAvailable = await isDomainAvailable(domainName);
     if (!isAvailable) {
-      return res.status(400).json({ error: 'Domain is not available' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'Domain is not available' }));
     }
 
     // Validate price
     const expectedPrice = await getDomainPrice(domainName);
     if (Math.abs(domainPriceUSDC - expectedPrice) > 0.01) {
-      return res.status(400).json({ error: 'Invalid domain price' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'Invalid domain price' }));
     }
 
     const buyerPublicKey = new PublicKey(buyerPubkey);
@@ -209,26 +226,32 @@ app.post('/sns/purchase-domain', async (req: Request, res: Response) => {
       verifySignatures: false
     });
 
-    res.json({
+    const response = {
       success: true,
       transaction: bs58.encode(serializedTransaction),
       transactionBase64: serializedTransaction.toString('base64'), // Keep base64 as fallback
       message: 'Transaction created successfully. User must sign and submit.'
-    });
+    };
+
+    res.json(encryptionMiddleware.processResponse(response));
 
   } catch (error) {
     console.error('Error creating purchase transaction:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json(encryptionMiddleware.processResponse({ error: 'Internal server error' }));
   }
 });
 
 // POST /sns/update-domain
 app.post('/sns/update-domain', async (req: Request, res: Response) => {
   try {
-    const { domain, newOwner } = req.body;
+    // Process request data (decrypt if encrypted)
+    const processedBody = encryptionMiddleware.processRequest(req.body);
+    console.log('[API] /sns/update-domain - Processed request body:', processedBody);
+    
+    const { domain, newOwner } = processedBody;
 
     if (!domain || !newOwner) {
-      return res.status(400).json({ error: 'Domain and new owner are required' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'Domain and new owner are required' }));
     }
 
     const domainName = domain.toLowerCase();
@@ -239,7 +262,7 @@ app.post('/sns/update-domain', async (req: Request, res: Response) => {
     const domainAccount = await connection.getAccountInfo(domainKey.pubkey);
 
     if (!domainAccount) {
-      return res.status(404).json({ error: 'Domain not found' });
+      return res.status(404).json(encryptionMiddleware.processResponse({ error: 'Domain not found' }));
     }
 
     // Create update instruction
@@ -265,15 +288,17 @@ app.post('/sns/update-domain', async (req: Request, res: Response) => {
       verifySignatures: false
     });
 
-    res.json({
+    const response = {
       success: true,
       transaction: serializedTransaction.toString('base64'),
       message: 'Update transaction created successfully'
-    });
+    };
+
+    res.json(encryptionMiddleware.processResponse(response));
 
   } catch (error) {
     console.error('Error updating domain:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json(encryptionMiddleware.processResponse({ error: 'Internal server error' }));
   }
 });
 
@@ -281,10 +306,14 @@ app.post('/sns/update-domain', async (req: Request, res: Response) => {
 // GET /sns/lookup - Using Bonfida SNS API
 app.get('/sns/lookup', async (req: Request, res: Response) => {
   try {
-    const { pubkey } = req.query;
+    // Process request data (decrypt if encrypted)
+    const processedQuery = encryptionMiddleware.processRequest(req.query);
+    console.log('[API] /sns/lookup - Processed query:', processedQuery);
+    
+    const { pubkey } = processedQuery;
 
     if (!pubkey || typeof pubkey !== 'string') {
-      return res.status(400).json({ error: 'Public key is required' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'Public key is required' }));
     }
 
     // Validate public key format
@@ -292,26 +321,26 @@ app.get('/sns/lookup', async (req: Request, res: Response) => {
     try {
       publicKey = new PublicKey(pubkey);
     } catch (pubkeyError) {
-      return res.status(400).json({ 
+      return res.status(400).json(encryptionMiddleware.processResponse({ 
         error: 'Invalid public key format',
         details: 'Public key must be a valid base58 string'
-      });
+      }));
     }
 
     console.log(`Looking up domains for: ${publicKey.toString()}`);
 
     try {
-      const response = await fetch(`https://sns-api.bonfida.com/v2/user/domains/${publicKey.toString()}`);
+      const apiResponse = await fetch(`https://sns-api.bonfida.com/v2/user/domains/${publicKey.toString()}`);
       
-      if (!response.ok) {
-        console.log(`Bonfida API failed with status: ${response.status}`);
-        return res.status(response.status).json({ 
+      if (!apiResponse.ok) {
+        console.log(`Bonfida API failed with status: ${apiResponse.status}`);
+        return res.status(apiResponse.status).json(encryptionMiddleware.processResponse({ 
           error: 'Failed to fetch domains from Bonfida API',
-          status: response.status 
-        });
+          status: apiResponse.status 
+        }));
       }
 
-      const data = await response.json() as Record<string, string[]>;
+      const data = await apiResponse.json() as Record<string, string[]>;
       console.log('Bonfida API response:', data);
       
       // Extract domains from the response
@@ -322,7 +351,7 @@ app.get('/sns/lookup', async (req: Request, res: Response) => {
       
       console.log(`Found ${formattedDomains.length} domains:`, formattedDomains);
       
-      res.json({
+      const response = {
         success: true,
         pubkey: publicKey.toString(),
         domains: formattedDomains,
@@ -330,37 +359,43 @@ app.get('/sns/lookup', async (req: Request, res: Response) => {
         message: formattedDomains.length > 0 ? 
           `Found ${formattedDomains.length} domain(s)` : 
           'No domains found for this public key'
-      });
+      };
+
+      res.json(encryptionMiddleware.processResponse(response));
 
     } catch (fetchError) {
       console.error('Error fetching from Bonfida API:', fetchError);
-      res.status(500).json({ 
+      res.status(500).json(encryptionMiddleware.processResponse({ 
         error: 'Failed to connect to Bonfida API',
         details: fetchError instanceof Error ? fetchError.message : 'Unknown error'
-      });
+      }));
     }
 
   } catch (error) {
     console.error('Error looking up domains:', error);
-    res.status(500).json({ 
+    res.status(500).json(encryptionMiddleware.processResponse({ 
       error: 'Internal server error',
       details: error instanceof Error ? error.message : 'Unknown error'
-    });
+    }));
   }
 });
 
 // GET /sns/domain-records - Get all records for a specific domain
 app.get('/sns/domain-records', async (req: Request, res: Response) => {
   try {
-    const { domain } = req.query;
+    // Process request data (decrypt if encrypted)
+    const processedQuery = encryptionMiddleware.processRequest(req.query);
+    console.log('[API] /sns/domain-records - Processed query:', processedQuery);
+    
+    const { domain } = processedQuery;
 
     if (!domain || typeof domain !== 'string') {
-      return res.status(400).json({ error: 'Domain is required' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'Domain is required' }));
     }
 
     const domainName = domain.toLowerCase();
     if (!domainName.endsWith('.sol')) {
-      return res.status(400).json({ error: 'Domain must end with .sol' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'Domain must end with .sol' }));
     }
 
     // Check if domain exists
@@ -368,7 +403,7 @@ app.get('/sns/domain-records', async (req: Request, res: Response) => {
     const domainAccount = await connection.getAccountInfo(domainKey.pubkey);
     
     if (!domainAccount) {
-      return res.status(404).json({ error: 'Domain not found' });
+      return res.status(404).json(encryptionMiddleware.processResponse({ error: 'Domain not found' }));
     }
 
     const nameRegistry = NameRegistryState.deserialize(domainAccount.data);
@@ -415,32 +450,38 @@ app.get('/sns/domain-records', async (req: Request, res: Response) => {
       }
     }
 
-    res.json({
+    const response = {
       domain: domainName,
       owner: owner.toString(),
       records: records,
       recordCount: Object.keys(records).length,
       message: 'Domain records retrieved successfully'
-    });
+    };
+
+    res.json(encryptionMiddleware.processResponse(response));
 
   } catch (error) {
     console.error('Error fetching domain records:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json(encryptionMiddleware.processResponse({ error: 'Internal server error' }));
   }
 });
 
 // GET /sns/reverse-lookup
 app.get('/sns/reverse-lookup', async (req: Request, res: Response) => {
   try {
-    const { domain } = req.query;
+    // Process request data (decrypt if encrypted)
+    const processedQuery = encryptionMiddleware.processRequest(req.query);
+    console.log('[API] /sns/reverse-lookup - Processed query:', processedQuery);
+    
+    const { domain } = processedQuery;
 
     if (!domain || typeof domain !== 'string') {
-      return res.status(400).json({ error: 'Domain is required' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'Domain is required' }));
     }
 
     const domainName = domain.toLowerCase();
     if (!domainName.endsWith('.sol')) {
-      return res.status(400).json({ error: 'Domain must end with .sol' });
+      return res.status(400).json(encryptionMiddleware.processResponse({ error: 'Domain must end with .sol' }));
     }
 
     // Get domain owner
@@ -448,7 +489,7 @@ app.get('/sns/reverse-lookup', async (req: Request, res: Response) => {
     const domainAccount = await connection.getAccountInfo(domainKey.pubkey);
 
     if (!domainAccount) {
-      return res.status(404).json({ error: 'Domain not found' });
+      return res.status(404).json(encryptionMiddleware.processResponse({ error: 'Domain not found' }));
     }
 
     const nameRegistry = NameRegistryState.deserialize(domainAccount.data);
@@ -538,22 +579,25 @@ app.get('/sns/reverse-lookup', async (req: Request, res: Response) => {
 
     const walletArray = Array.from(connectedWallets);
 
-    res.json({
+    const response = {
       domain: domainName,
       owner: owner.toString(),
       connectedWallets: walletArray,
       totalConnectedWallets: walletArray.length,
       message: 'Reverse lookup completed with all connected wallets'
-    });
+    };
+
+    res.json(encryptionMiddleware.processResponse(response));
 
   } catch (error) {
     console.error('Error performing reverse lookup:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json(encryptionMiddleware.processResponse({ error: 'Internal server error' }));
   }
 });
 // Health check endpoint
 app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  const response = { status: 'OK', timestamp: new Date().toISOString() };
+  res.json(encryptionMiddleware.processResponse(response));
 });
 
 // Start server
